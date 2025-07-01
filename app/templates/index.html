@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Docker 日志监控</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.min.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+
+        .container-fluid {
+            display: flex;
+            padding-top: 20px;
+            gap: 20px; 
+        }
+
+        .log-box {
+            height: 750px; 
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            display: flex;
+            flex-direction: column;
+            max-width: 100%;
+        }
+
+
+            
+
+        .log-box-header {
+            padding: 10px 15px;
+            background-color: #f1f1f1;
+            border-bottom: 1px solid #ddd;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .log-box-body {
+            padding: 15px;
+            overflow-y: auto;
+            flex-grow: 1;
+            font-family: 'Courier New', Courier, monospace;
+            white-space: pre-wrap; 
+            word-break: break-all; 
+        }
+
+        #container-list-wrapper {
+            width: 300px; /* 固定左侧宽度 */
+            flex-shrink: 0; /* 防止被压缩 */
+        }
+
+        #log-area-wrapper {
+            flex-grow: 1; /* 占据剩余空间 */
+        }
+
+        #log-area {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px; /* 日志框之间的间距 */
+        }
+
+        .log-box-container {
+            flex-basis: 100%; /* 一行一个 */
+            display: flex; /* 让内部log-box能撑开 */
+        }
+
+        .log-box {
+            flex-grow: 1; /* 填充整个 .log-box-container */
+
+        .hidden-containers {
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container-fluid">
+        <div id="container-list-wrapper">
+            <h3>容器列表</h3>
+            <input type="text" id="container-search" class="form-control mb-2" placeholder="搜索容器...">
+            <div id="container-list"></div>
+            <button id="show-more-btn" class="btn btn-link btn-sm mt-2">显示更多</button>
+        </div>
+        <div id="log-area-wrapper">
+            <div id="log-area">
+                <!-- Log boxes will be dynamically added here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const logIntervals = {};
+        const MAX_INITIAL_CONTAINERS = 10; // 初始显示容器数量
+
+        function fetchLogs(containerId) {
+            const logBox = document.getElementById(`log-box-${containerId}`);
+            if (!logBox) return;
+
+            const logBody = logBox.querySelector('.log-box-body');
+            const filterInput = document.getElementById(`filter-${containerId}`);
+            const url = `/api/logs`;
+
+            // Stop previous interval if it exists
+            if (logIntervals[containerId]) {
+                clearInterval(logIntervals[containerId]);
+            }
+
+            const getLogs = () => {
+                const filterRegex = filterInput.value;
+                fetch(url, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ 
+                            container_ids: [containerId],
+                            filter_regex: filterRegex
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        const isScrolledToBottom = logBody.scrollHeight - logBody.clientHeight <= logBody.scrollTop + 1;
+
+                        logBody.textContent = data.logs || '暂无日志';
+
+                        if (isScrolledToBottom) {
+                           logBody.scrollTop = logBody.scrollHeight; // Auto-scroll to bottom
+                        }
+                    })
+                    .catch(error => {
+                        console.error('获取日志时出错:', error);
+                        logBody.textContent = '获取日志失败。';
+                        clearInterval(logIntervals[containerId]); // Stop on error
+                    });
+            };
+
+            getLogs(); // Initial fetch
+            logIntervals[containerId] = setInterval(getLogs, 5000); // Refresh every 5 seconds
+        }
+
+        function addLogBox(containerId, containerName) {
+            if (document.getElementById(`log-box-${containerId}`)) {
+                return; // Box already exists
+            }
+
+            const logArea = document.getElementById('log-area');
+            const logBoxWrapper = document.createElement('div');
+            // logBoxWrapper.className = 'col'; // Use Bootstrap's column for automatic layout
+            logBoxWrapper.className = 'log-box-container';
+            logBoxWrapper.id = `log-box-${containerId}`;
+            logBoxWrapper.innerHTML = `
+                <div class="log-box">
+                    <div class="log-box-header">
+                        <span>${containerName}</span>
+                        <button type="button" class="btn-close" aria-label="Close"></button>
+                    </div>
+                    <div class="p-2 border-bottom">
+                        <input type="text" class="form-control form-control-sm" id="filter-${containerId}" placeholder="使用正则表达式过滤日志...">
+                    </div>
+                    <div class="log-box-body">正在加载日志...</div>
+                </div>
+            `;
+
+            logArea.appendChild(logBoxWrapper);
+
+            logBoxWrapper.querySelector('.btn-close').addEventListener('click', () => {
+                removeLogBox(containerId);
+            });
+
+            logBoxWrapper.querySelector(`#filter-${containerId}`).addEventListener('input', () => {
+                fetchLogs(containerId);
+            });
+
+            updateStoredContainers(containerId, true);
+            fetchLogs(containerId);
+        }
+
+        function removeLogBox(containerId) {
+            const logBox = document.getElementById(`log-box-${containerId}`);
+            if (logBox) {
+                logBox.remove();
+            }
+            if (logIntervals[containerId]) {
+                clearInterval(logIntervals[containerId]);
+                delete logIntervals[containerId];
+            }
+            // Also uncheck the checkbox
+            const checkbox = document.getElementById(`checkbox-${containerId}`);
+            if (checkbox) {
+                checkbox.checked = false;
+            }
+            updateStoredContainers(containerId, false);
+        }
+
+        function getStoredContainers() {
+            return JSON.parse(localStorage.getItem('openContainers') || '[]');
+        }
+
+        function updateStoredContainers(containerId, isOpen) {
+            let openContainers = getStoredContainers();
+            if (isOpen) {
+                if (!openContainers.includes(containerId)) {
+                    openContainers.push(containerId);
+                }
+            } else {
+                openContainers = openContainers.filter(id => id !== containerId);
+            }
+            localStorage.setItem('openContainers', JSON.stringify(openContainers));
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            fetch('/api/containers')
+                .then(response => response.json())
+                .then(containers => {
+                    const containerList = document.getElementById('container-list');
+                    const storedContainers = getStoredContainers();
+                    const showMoreBtn = document.getElementById('show-more-btn');
+                    const initialLimit = 20;
+                    let isExpanded = false;
+
+                    if (containers.length === 0) {
+                        containerList.innerHTML = '<p>未找到正在运行的容器。</p>';
+                        showMoreBtn.style.display = 'none';
+                        return;
+                    }
+
+                    containers.forEach((container, index) => {
+                        const containerId = container.id.substring(0, 12);
+                        const containerName = container.name;
+                        const checkboxWrapper = document.createElement('div');
+                        checkboxWrapper.classList.add('form-check');
+                        
+                        if(index >= initialLimit) {
+                            checkboxWrapper.style.display = 'none';
+                        }
+
+                        checkboxWrapper.innerHTML = `
+                            <input class="form-check-input container-checkbox" type="checkbox" value="${containerId}" id="checkbox-${containerId}" data-name="${containerName}">
+                            <label class="form-check-label" for="checkbox-${containerId}">
+                                ${containerName}
+                            </label>
+                        `;
+                        containerList.appendChild(checkboxWrapper);
+
+                        const checkbox = document.getElementById(`checkbox-${containerId}`);
+                        checkbox.addEventListener('change', (event) => {
+                            if (event.target.checked) {
+                                addLogBox(containerId, containerName);
+                            } else {
+                                removeLogBox(containerId);
+                            }
+                        });
+
+                        if (storedContainers.includes(containerId)) {
+                            checkbox.checked = true;
+                            addLogBox(containerId, containerName);
+                        }
+                    });
+
+                    if(containers.length > initialLimit){
+                        showMoreBtn.textContent = '显示更多';
+                        showMoreBtn.style.display = 'inline-block';
+                        showMoreBtn.addEventListener('click', () => {
+                            isExpanded = !isExpanded;
+                            const allItems = containerList.querySelectorAll('.form-check');
+                            if (isExpanded) {
+                                allItems.forEach(el => el.style.display = 'block');
+                                showMoreBtn.textContent = '收起';
+                            } else {
+                                allItems.forEach((el, index) => {
+                                    if (index >= initialLimit) {
+                                        el.style.display = 'none';
+                                    }
+                                });
+                                showMoreBtn.textContent = '显示更多';
+                            }
+                        });
+                    } else {
+                        showMoreBtn.style.display = 'none';
+                    }
+
+                    document.getElementById('container-search').addEventListener('keyup', function() {
+                        const filter = this.value.toLowerCase();
+                        const labels = containerList.querySelectorAll('.form-check');
+                        labels.forEach(label => {
+                            const name = label.querySelector('.form-check-label').textContent.toLowerCase();
+                            if (name.includes(filter)) {
+                                label.style.display = 'block';
+                            } else {
+                                label.style.display = 'none';
+                            }
+                        });
+                    });
+                })
+                .catch(error => {
+                    console.error('获取容器列表时出错:', error);
+                    document.getElementById('container-list').innerHTML = '<p>获取容器列表失败。</p>';
+                });
+        });
+    </script>
+</body>
+
+</html>
