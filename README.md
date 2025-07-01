@@ -13,7 +13,7 @@
 1.  **克隆仓库：**
 
     ```bash
-    git clone <repository-url>
+    git clone [<repository-url>](https://github.com/Sor85/docker-log-monitoring.git)
     cd docker-log-monitor
     ```
 
